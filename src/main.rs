@@ -105,7 +105,7 @@ fn main() -> Result<()> {
         let token_grants: TokenGrantResponse = token_grant_response.json()?;
         let tokens_file_contents = toml::to_string(&token_grants)?;
         std::fs::create_dir_all(tokens_path.parent().unwrap())?;
-        std::fs::write(tokens_path, tokens_file_contents)?;
+        std::fs::write(tokens_path.clone(), tokens_file_contents)?;
 
         token_grants
     };
@@ -118,20 +118,44 @@ fn main() -> Result<()> {
         )
         .send()?;
 
-    if token_validate_response.status() != 200 {
-        todo!();
-    }
+    let (access_token, user_id) = if token_validate_response.status() != 200 {
+        let mut token_refresh_params = HashMap::new();
+        token_refresh_params.insert("client_id", CLIENT_ID);
+        token_refresh_params.insert("grant_type", "refresh_token");
+        token_refresh_params.insert("refresh_token", &token_grants.refresh_token);
 
-    let valid_token_response: TokenValidateResponse = token_validate_response.json()?;
+        let token_refresh_response: TokenGrantResponse = client
+            .post("https://id.twitch.tv/oauth2/token")
+            .form(&token_refresh_params)
+            .send()?
+            .json()?;
+
+        let tokens_file_contents = toml::to_string(&token_refresh_response)?;
+        std::fs::write(tokens_path.clone(), tokens_file_contents)?;
+
+        let token_validate_response: TokenValidateResponse = client
+            .get("https://id.twitch.tv/oauth2/validate")
+            .header(
+                "Authorization",
+                format!("Bearer {}", token_grants.access_token),
+            )
+            .send()?
+            .json()?;
+
+        (
+            token_refresh_response.access_token,
+            token_validate_response.user_id,
+        )
+    } else {
+        let valid_token_response: TokenValidateResponse = token_validate_response.json()?;
+        (token_grants.access_token, valid_token_response.user_id)
+    };
 
     let followed_channels_response: FollowedChannelsResponse = client
         .get("https://api.twitch.tv/helix/streams/followed")
-        .query(&[("user_id", valid_token_response.user_id)])
+        .query(&[("user_id", user_id)])
         .header("Client-Id", CLIENT_ID)
-        .header(
-            "Authorization",
-            format!("Bearer {}", token_grants.access_token),
-        )
+        .header("Authorization", format!("Bearer {}", access_token))
         .send()?
         .json()?;
 
