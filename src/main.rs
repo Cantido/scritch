@@ -1,8 +1,10 @@
-use std::{collections::HashMap, path::Path, thread, time::Duration};
+use std::{collections::HashMap, io::stdout, path::Path, thread, time::Duration};
 
 use anyhow::Result;
 use directories::ProjectDirs;
+use owo_colors::OwoColorize;
 use serde::{Deserialize, Serialize};
+use textwrap::{fill, Options};
 
 const CLIENT_ID: &'static str = "qhh20sm8ceyh4m7qc84458l943crh8";
 
@@ -86,16 +88,12 @@ fn main() -> Result<()> {
         token_grant_params.insert("device_code", &device_code_response.device_code);
         token_grant_params.insert("grant_type", "urn:ietf:params:oauth:grant-type:device_code");
 
-        println!("device code: {}", &device_code_response.device_code);
-
         let mut token_grant_response = client
             .post("https://id.twitch.tv/oauth2/token")
             .form(&token_grant_params)
             .send()?;
 
         while token_grant_response.status() != 200 {
-            println!("status is {}", token_grant_response.status());
-            println!("body is {}", token_grant_response.text()?);
             thread::sleep(Duration::from_secs(1));
 
             token_grant_response = client
@@ -139,8 +137,35 @@ fn main() -> Result<()> {
 
     println!("Current streams:");
 
+    let wrap_options = Options::with_termwidth()
+        .initial_indent("  ")
+        .subsequent_indent("    ");
+
     for stream in followed_channels_response.data {
-        println!("{}: {}", stream.user_name, stream.title);
+        println!("{}", stream.user_name.bold());
+
+        println!(
+            "{}",
+            fill(
+                &format!("{}: {}", "game".dimmed(), stream.game_name),
+                wrap_options.clone(),
+            )
+        );
+        println!(
+            "{}",
+            fill(
+                &format!("{}: {}", "viewers".dimmed(), stream.viewer_count),
+                wrap_options.clone(),
+            )
+        );
+
+        println!(
+            "{}",
+            fill(
+                &format!("{}: {}", "title".dimmed(), stream.title),
+                wrap_options.clone(),
+            )
+        );
     }
 
     Ok(())
