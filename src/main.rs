@@ -1,7 +1,7 @@
 use std::{collections::HashMap, io::stdout, path::Path, thread, time::Duration};
 
-use anyhow::{Context, Result};
 use directories::ProjectDirs;
+use miette::{Context, IntoDiagnostic, Result};
 use owo_colors::OwoColorize;
 use serde::{Deserialize, Serialize};
 use textwrap::{fill, Options};
@@ -66,19 +66,24 @@ fn main() -> Result<()> {
     let tokens_path = project_dirs.data_dir().join("tokens.toml");
 
     let token_grants: TokenGrantResponse = if tokens_path.exists() {
-        let token_file_contents =
-            std::fs::read_to_string(&tokens_path).with_context(|| "Failed to read token file")?;
+        let token_file_contents = std::fs::read_to_string(&tokens_path)
+            .into_diagnostic()
+            .wrap_err("Failed to read token file")?;
 
-        toml::from_str(&token_file_contents).with_context(|| "Failed to serialize token to TOML")?
+        toml::from_str(&token_file_contents)
+            .into_diagnostic()
+            .wrap_err("Failed to serialize token to TOML")?
     } else {
         let device_code_response: DeviceCodeResponse = client
             .post("https://id.twitch.tv/oauth2/device")
             .header("Content-Type", "application/x-www-form-urlencoded")
             .body("client_id=qhh20sm8ceyh4m7qc84458l943crh8&scopes=user%3Aread%3Afollows")
             .send()
-            .with_context(|| "Failed to make device code request")?
+            .into_diagnostic()
+            .wrap_err("Failed to make device code request")?
             .json()
-            .with_context(|| "Failed to decode device code response")?;
+            .into_diagnostic()
+            .wrap_err("Failed to decode device code response")?;
 
         println!(
             "Please log in and accept the authorization request at this URL: {}",
@@ -94,7 +99,9 @@ fn main() -> Result<()> {
         let mut token_grant_response = client
             .post("https://id.twitch.tv/oauth2/token")
             .form(&token_grant_params)
-            .send()?;
+            .send()
+            .into_diagnostic()
+            .wrap_err("Failed to make token grant request")?;
 
         while token_grant_response.status() != 200 {
             thread::sleep(Duration::from_secs(1));
@@ -102,13 +109,24 @@ fn main() -> Result<()> {
             token_grant_response = client
                 .post("https://id.twitch.tv/oauth2/token")
                 .form(&token_grant_params)
-                .send()?;
+                .send()
+                .into_diagnostic()
+                .wrap_err("Token grant request failed")?;
         }
 
-        let token_grants: TokenGrantResponse = token_grant_response.json()?;
-        let tokens_file_contents = toml::to_string(&token_grants)?;
-        std::fs::create_dir_all(tokens_path.parent().unwrap())?;
-        std::fs::write(tokens_path.clone(), tokens_file_contents)?;
+        let token_grants: TokenGrantResponse = token_grant_response
+            .json()
+            .into_diagnostic()
+            .wrap_err("Failed to parse token grant response")?;
+        let tokens_file_contents = toml::to_string(&token_grants)
+            .into_diagnostic()
+            .wrap_err("Failed to serialize token")?;
+        std::fs::create_dir_all(tokens_path.parent().unwrap())
+            .into_diagnostic()
+            .wrap_err("Failed to create directory to save tokens in")?;
+        std::fs::write(tokens_path.clone(), tokens_file_contents)
+            .into_diagnostic()
+            .wrap_err("Failed to save tokens to file")?;
 
         token_grants
     };
@@ -119,7 +137,9 @@ fn main() -> Result<()> {
             "Authorization",
             format!("Bearer {}", token_grants.access_token),
         )
-        .send()?;
+        .send()
+        .into_diagnostic()
+        .wrap_err("Token validate response failed")?;
 
     let (access_token, user_id) = if token_validate_response.status() != 200 {
         let mut token_refresh_params = HashMap::new();
@@ -130,14 +150,19 @@ fn main() -> Result<()> {
         let token_refresh_response: TokenGrantResponse = client
             .post("https://id.twitch.tv/oauth2/token")
             .form(&token_refresh_params)
-            .send()?
+            .send()
+            .into_diagnostic()
+            .wrap_err("Token refresh request failed")?
             .json()
-            .with_context(|| "Failed to decode token refresh grant response")?;
+            .into_diagnostic()
+            .wrap_err("Failed to decode token refresh grant response")?;
 
         let tokens_file_contents = toml::to_string(&token_refresh_response)
-            .with_context(|| "Failed to serialize token grant to TOML")?;
+            .into_diagnostic()
+            .wrap_err("Failed to serialize token grant to TOML")?;
         std::fs::write(tokens_path.clone(), tokens_file_contents)
-            .with_context(|| "Failed to save token")?;
+            .into_diagnostic()
+            .wrap_err("Failed to save token")?;
 
         let token_validate_response: TokenValidateResponse = client
             .get("https://id.twitch.tv/oauth2/validate")
@@ -145,15 +170,22 @@ fn main() -> Result<()> {
                 "Authorization",
                 format!("Bearer {}", token_grants.access_token),
             )
-            .send()?
-            .json()?;
+            .send()
+            .into_diagnostic()
+            .wrap_err("Token validate request failed")?
+            .json()
+            .into_diagnostic()
+            .wrap_err("Failed to parse token validation response")?;
 
         (
             token_refresh_response.access_token,
             token_validate_response.user_id,
         )
     } else {
-        let valid_token_response: TokenValidateResponse = token_validate_response.json()?;
+        let valid_token_response: TokenValidateResponse = token_validate_response
+            .json()
+            .into_diagnostic()
+            .wrap_err("Failed to parse token validation reponse")?;
         (token_grants.access_token, valid_token_response.user_id)
     };
 
@@ -162,8 +194,12 @@ fn main() -> Result<()> {
         .query(&[("user_id", user_id)])
         .header("Client-Id", CLIENT_ID)
         .header("Authorization", format!("Bearer {}", access_token))
-        .send()?
-        .json()?;
+        .send()
+        .into_diagnostic()
+        .wrap_err("Followed channel request failed")?
+        .json()
+        .into_diagnostic()
+        .wrap_err("Failed to parse followed channel response")?;
 
     println!("Current streams:");
 
