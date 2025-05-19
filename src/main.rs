@@ -1,6 +1,6 @@
 use std::{collections::HashMap, io::stdout, path::Path, thread, time::Duration};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use directories::ProjectDirs;
 use owo_colors::OwoColorize;
 use serde::{Deserialize, Serialize};
@@ -61,21 +61,24 @@ struct Stream {
 fn main() -> Result<()> {
     let client = reqwest::blocking::Client::new();
 
-    let project_dirs = ProjectDirs::from("dev", "cosmicrose", "scritch").unwrap();
-    let validate_cache_path = project_dirs.cache_dir().join("validate.toml");
+    let project_dirs = ProjectDirs::from("dev", "cosmicrose", "scritch")
+        .expect("Project directories should be defined for this operating system");
     let tokens_path = project_dirs.data_dir().join("tokens.toml");
 
     let token_grants: TokenGrantResponse = if tokens_path.exists() {
-        let token_file_contents = std::fs::read_to_string(&tokens_path)?;
+        let token_file_contents =
+            std::fs::read_to_string(&tokens_path).with_context(|| "Failed to read token file")?;
 
-        toml::from_str(&token_file_contents)?
+        toml::from_str(&token_file_contents).with_context(|| "Failed to serialize token to TOML")?
     } else {
         let device_code_response: DeviceCodeResponse = client
             .post("https://id.twitch.tv/oauth2/device")
             .header("Content-Type", "application/x-www-form-urlencoded")
             .body("client_id=qhh20sm8ceyh4m7qc84458l943crh8&scopes=user%3Aread%3Afollows")
-            .send()?
-            .json()?;
+            .send()
+            .with_context(|| "Failed to make device code request")?
+            .json()
+            .with_context(|| "Failed to decode device code response")?;
 
         println!(
             "Please log in and accept the authorization request at this URL: {}",
@@ -128,10 +131,13 @@ fn main() -> Result<()> {
             .post("https://id.twitch.tv/oauth2/token")
             .form(&token_refresh_params)
             .send()?
-            .json()?;
+            .json()
+            .with_context(|| "Failed to decode token refresh grant response")?;
 
-        let tokens_file_contents = toml::to_string(&token_refresh_response)?;
-        std::fs::write(tokens_path.clone(), tokens_file_contents)?;
+        let tokens_file_contents = toml::to_string(&token_refresh_response)
+            .with_context(|| "Failed to serialize token grant to TOML")?;
+        std::fs::write(tokens_path.clone(), tokens_file_contents)
+            .with_context(|| "Failed to save token")?;
 
         let token_validate_response: TokenValidateResponse = client
             .get("https://id.twitch.tv/oauth2/validate")
