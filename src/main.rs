@@ -175,7 +175,7 @@ fn main() -> Result<()> {
             .wrap_err("Token validate request failed")?
             .json()
             .into_diagnostic()
-            .wrap_err("Failed to parse token validation response")?;
+            .wrap_err("Failed to parse token validation response during token refresh")?;
 
         (
             token_refresh_response.access_token,
